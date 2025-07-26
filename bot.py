@@ -4,6 +4,7 @@ from logic import *
 import schedule
 import threading
 import time
+import os
 from config import *
 
 bot = TeleBot(API_TOKEN)
@@ -37,6 +38,25 @@ def handle_rating(message):
     table = '\n'.join([header] + lines + ['-' * 31])
     bot.send_message(message.chat.id, f"<pre>{table}</pre>", parse_mode="HTML")
 
+@bot.message_handler(commands=['my_score'])
+def get_my_score(message):
+    user_id = message.chat.id
+    won_images = manager.get_winners_img(user_id)
+    all_images = os.listdir('img')
+    image_paths = [f'img/{x}' if x in won_images else f'hidden_img/{x}' for x in all_images]
+
+    collage = create_collage(image_paths)
+    if collage is None:
+        bot.send_message(user_id, "У тебя пока нет картинок для коллажа.")
+        return
+
+    os.makedirs('temp', exist_ok=True)
+    out_path = f"temp/collage_{user_id}.jpg"
+    cv2.imwrite(out_path, collage)
+    with open(out_path, 'rb') as photo:
+        bot.send_photo(user_id, photo, caption="Вот твой коллаж достижений!")
+    os.remove(out_path)
+
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     prize_id = call.data
@@ -45,28 +65,22 @@ def handle_callback(call):
         success = manager.add_winner(user_id, prize_id)
         if success:
             img = manager.get_prize_img(prize_id)
-            try:
-                with open(f'img/{img}', 'rb') as photo:
-                    bot.send_photo(user_id, photo, caption="Поздравляем! Ты получил картинку! 🎉")
-            except Exception as e:
-                bot.send_message(user_id, f"Ошибка при отправке картинки: {e}")
+            with open(f'img/{img}', 'rb') as photo:
+                bot.send_photo(user_id, photo, caption="Поздравляем! Ты получил картинку! 🎉")
         else:
             bot.send_message(user_id, "Ты уже получал эту картинку!")
     else:
         bot.send_message(user_id, "Увы, три пользователя уже успели получить картинку. Попробуй в следующий раз!")
 
-
-
 def send_message():
-    prize_id, img = manager.get_random_prize()[:2]
-    manager.mark_prize_used(prize_id)
-    hide_img(img)
-    for user_id in manager.get_users():
-        try:
+    prize = manager.get_random_prize()
+    if prize:
+        prize_id, img = prize[:2]
+        manager.mark_prize_used(prize_id)
+        hide_img(img)
+        for user_id in manager.get_users():
             with open(f'hidden_img/{img}', 'rb') as photo:
                 bot.send_photo(user_id, photo, reply_markup=gen_markup(prize_id))
-        except Exception as e:
-            bot.send_message(user_id, f"Ошибка при отправке скрытого изображения: {e}")
 
 def schedule_thread():
     schedule.every(1).minutes.do(send_message)
